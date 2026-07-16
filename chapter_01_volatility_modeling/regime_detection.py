@@ -1,117 +1,155 @@
 """
-ATR (Average True Range) Calculation and Analysis
+Market Regime Detection using Volatility
 Chapter 1: Volatility Measurement and Modeling
 Book 2: Python for Advanced Algorithmic Trading
 """
 
 import numpy as np
 import pandas as pd
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 
 
-def calculate_true_range(df):
+def calculate_atr_helper(df, period=14):
     """
-    Calculate the True Range for each candle.
-    
-    True Range is the maximum of:
-    1. High - Low (current candle range)
-    2. |High - Previous Close| (bullish gap)
-    3. |Low - Previous Close| (bearish gap)
-    
-    Parameters:
-    -----------
-    df : pandas DataFrame
-        Must contain columns: 'high', 'low', 'close'
-    
-    Returns:
-    --------
-    pandas DataFrame with added 'true_range' column
+    Helper function to calculate ATR if not already present.
     """
-    # Make a copy to avoid modifying original data
-    df = df.copy()
-    
-    # Calculate the three components of True Range
     high_low = df['high'] - df['low']
     high_close = np.abs(df['high'] - df['close'].shift(1))
     low_close = np.abs(df['low'] - df['close'].shift(1))
-    
-    # True Range is the maximum of the three
     df['true_range'] = np.maximum(high_low, np.maximum(high_close, low_close))
-    
-    return df
-
-
-def calculate_atr(df, period=14):
-    """
-    Calculate the Average True Range (ATR).
-    
-    The ATR is the moving average of the True Range,
-    typically using 14 periods.
-    
-    Parameters:
-    -----------
-    df : pandas DataFrame
-        Must contain columns: 'high', 'low', 'close'
-    period : int, default=14
-        Period for the moving average
-    
-    Returns:
-    --------
-    pandas DataFrame with added 'atr' and 'atr_pct' columns
-    """
-    # First calculate True Range
-    df = calculate_true_range(df)
-    
-    # Calculate ATR as simple moving average of True Range
     df['atr'] = df['true_range'].rolling(window=period).mean()
-    
-    # ATR as percentage of price (for comparison across assets)
     df['atr_pct'] = (df['atr'] / df['close']) * 100
-    
     return df
 
 
-def analyze_normalized_atr(df, period=14):
+def detect_regimes_atr(df, period=14):
     """
-    Analyze the normalized ATR to compare volatility across assets.
-    
-    Parameters:
-    -----------
-    df : pandas DataFrame
-        Must contain columns: 'high', 'low', 'close'
-    period : int, default=14
-        Period for ATR calculation
-    
-    Returns:
-    --------
-    pandas DataFrame with ATR analysis
+    Method 1: Detects volatility regimes using fixed percentile thresholds.
     """
-    # Calculate ATR
-    df = calculate_atr(df, period)
-    
-    # Get ATR percentage (drop NaN values)
+    df = calculate_atr_helper(df, period)
     atr_pct = df['atr_pct'].dropna()
     
-    print("=== NORMALIZED ATR ANALYSIS ===\n")
-    print(f"ATR% mean: {atr_pct.mean():.3f}%")
-    print(f"ATR% median: {atr_pct.median():.3f}%")
-    print(f"ATR% minimum: {atr_pct.min():.3f}%")
-    print(f"ATR% maximum: {atr_pct.max():.3f}%")
-    print(f"ATR% standard deviation: {atr_pct.std():.3f}%\n")
+    # Thresholds based on percentiles
+    low_threshold = atr_pct.quantile(0.25)
+    high_threshold = atr_pct.quantile(0.75)
     
-    # Calculate percentiles
-    print("ATR% percentiles:")
-    for p in [10, 25, 50, 75, 90]:
-        value = atr_pct.quantile(p / 100)
-        print(f"  P{p}: {value:.3f}%")
+    # Classify each period
+    def classify_regime(atr_value):
+        if atr_value < low_threshold:
+            return 'low'
+        elif atr_value > high_threshold:
+            return 'high'
+        else:
+            return 'normal'
+            
+    df['volatility_regime'] = df['atr_pct'].apply(classify_regime)
     
-    # Classify volatility regimes based on percentiles
-    p25 = atr_pct.quantile(0.25)
-    p75 = atr_pct.quantile(0.75)
+    # Statistics
+    print("=== DISTRIBUTION OF REGIMES (PERCENTILES) ===\n")
+    counts = df['volatility_regime'].value_counts()
+    total = len(df[df['volatility_regime'].notna()])
+    for regime in ['low', 'normal', 'high']:
+        count = counts.get(regime, 0)
+        pct = 100 * count / total if total > 0 else 0
+        print(f"{regime.capitalize()}: {count} periods ({pct:.1f}%)")
+        
+    return df
+
+
+def detect_bollinger_atr_regimes(df, period_atr=14, period_bollinger=50, num_std=2):
+    """
+    Method 2: Detects regimes using Bollinger Bands applied to the ATR.
+    """
+    df = calculate_atr_helper(df, period_atr)
     
-    print(f"\n=== VOLATILITY REGIMES ===")
-    print(f"Low volatility (ATR% < {p25:.3f}%): {len(atr_pct[atr_pct < p25])} periods")
-    print(f"Normal volatility (P25-P75): {len(atr_pct[(atr_pct >= p25) & (atr_pct <= p75)])} periods")
-    print(f"High volatility (ATR% > {p75:.3f}%): {len(atr_pct[atr_pct > p75])} periods")
+    # Bollinger Bands over ATR
+    df['atr_ma'] = df['atr'].rolling(period_bollinger).mean()
+    df['atr_std'] = df['atr'].rolling(period_bollinger).std()
+    df['atr_upper'] = df['atr_ma'] + (num_std * df['atr_std'])
+    df['atr_lower'] = df['atr_ma'] - (num_std * df['atr_std'])
+    
+    # Classify regimes
+    def classify_regime(row):
+        if pd.isna(row['atr_upper']):
+            return 'unknown'
+        elif row['atr'] > row['atr_upper']:
+            return 'high'
+        elif row['atr'] < row['atr_lower']:
+            return 'low'
+        else:
+            return 'normal'
+            
+    df['volatility_regime_bb'] = df.apply(classify_regime, axis=1)
+    
+    # Statistics
+    print("=== REGIMES WITH BOLLINGER ATR ===\n")
+    counts = df['volatility_regime_bb'].value_counts()
+    total = len(df[df['volatility_regime_bb'] != 'unknown'])
+    for regime in ['low', 'normal', 'high']:
+        count = counts.get(regime, 0)
+        pct = 100 * count / total if total > 0 else 0
+        print(f"{regime.capitalize()}: {count} periods ({pct:.1f}%)")
+        
+    return df
+
+
+def detect_clustering_regimes(df, period_atr=14, num_clusters=3):
+    """
+    Method 3: Detects regimes using K-Means clustering on multiple volatility features.
+    """
+    df = calculate_atr_helper(df, period_atr)
+    
+    # Features for clustering
+    df['log_return'] = np.log(df['close'] / df['close'].shift(1))
+    df['vol_5'] = df['log_return'].rolling(5).std()
+    df['vol_20'] = df['log_return'].rolling(20).std()
+    df['vol_50'] = df['log_return'].rolling(50).std()
+    df['range'] = (df['high'] - df['low']) / df['close']
+    
+    # Select features and remove NaNs
+    features = ['atr', 'vol_5', 'vol_20', 'vol_50', 'range']
+    df_features = df[features].dropna().copy()
+    
+    # Normalize features
+    scaler = StandardScaler()
+    normalized_features = scaler.fit_transform(df_features)
+    
+    # Clustering
+    kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10)
+    df_features['cluster'] = kmeans.fit_predict(normalized_features)
+    
+    # Analyze clusters
+    print("=== VOLATILITY CLUSTER ANALYSIS ===\n")
+    for cluster in range(num_clusters):
+        subset = df_features[df_features['cluster'] == cluster]
+        print(f"Cluster {cluster + 1}:")
+        print(f"  Periods: {len(subset)} ({100*len(subset)/len(df_features):.1f}%)")
+        print(f"  ATR mean: {subset['atr'].mean():.5f}")
+        print(f"  Average volatility 5: {subset['vol_5'].mean():.5f}")
+        print(f"  Average volatility 20: {subset['vol_20'].mean():.5f}")
+        print(f"  Mean range: {subset['range'].mean()*100:.3f}%\n")
+    
+    # Assign qualitative labels based on ATR mean
+    cluster_stats = []
+    for cluster in range(num_clusters):
+        subset = df_features[df_features['cluster'] == cluster]
+        cluster_stats.append({
+            'cluster': cluster,
+            'atr_mean': subset['atr'].mean()
+        })
+    
+    cluster_stats = sorted(cluster_stats, key=lambda x: x['atr_mean'])
+    labels = {
+        cluster_stats[0]['cluster']: 'low',
+        cluster_stats[1]['cluster']: 'normal',
+        cluster_stats[2]['cluster']: 'high'
+    }
+    
+    df_features['regime'] = df_features['cluster'].map(labels)
+    
+    # Merge with original df
+    df = df.join(df_features['regime'], how='left')
     
     return df
 
@@ -119,24 +157,37 @@ def analyze_normalized_atr(df, period=14):
 # Example usage
 if __name__ == "__main__":
     # Create sample data for testing
-    dates = pd.date_range(start='2024-01-01', periods=100, freq='D')
     np.random.seed(42)
+    n_days = 1000
     
-    # Generate sample OHLC data
-    close = 100 + np.cumsum(np.random.randn(100) * 0.5)
-    high = close + np.random.rand(100) * 2
-    low = close - np.random.rand(100) * 2
-    open_price = close.shift(1).fillna(close)
+    # Generate sample price data with volatility clustering
+    returns = np.random.randn(n_days) * 0.01
+    returns[0:100] *= 1.5  # High volatility period
+    returns[500:600] *= 0.5  # Low volatility period
+    
+    prices = 100 * np.cumprod(1 + returns)
+    high = prices * (1 + np.random.rand(n_days) * 0.01)
+    low = prices * (1 - np.random.rand(n_days) * 0.01)
     
     df_sample = pd.DataFrame({
-        'open': open_price,
+        'open': prices,
         'high': high,
         'low': low,
-        'close': close
-    }, index=dates)
+        'close': prices
+    }, index=pd.date_range(start='2020-01-01', periods=n_days, freq='D'))
     
-    # Run analysis
-    df_result = analyze_normalized_atr(df_sample, period=14)
+    print("="*70)
+    print("REGIME DETECTION METHODS")
+    print("="*70)
+    print()
     
-    print("\n=== First 10 rows of ATR data ===")
-    print(df_result[['close', 'true_range', 'atr', 'atr_pct']].head(10))
+    # Method 1
+    df_res1 = detect_regimes_atr(df_sample.copy(), period=14)
+    print()
+    
+    # Method 2
+    df_res2 = detect_bollinger_atr_regimes(df_sample.copy(), period_atr=14, period_bollinger=50)
+    print()
+    
+    # Method 3
+    df_res3 = detect_clustering_regimes(df_sample.copy(), period_atr=14, num_clusters=3)
