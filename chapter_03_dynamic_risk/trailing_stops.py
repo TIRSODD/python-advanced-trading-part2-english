@@ -51,7 +51,7 @@ def calculate_dynamic_stop_atr(df, signals, multiplier_atr=2.0):
     return pd.DataFrame(stop_losses)
 
 
-def implement_trailing_stop_dinamico(df, signal, multiplier_trailing=1.5):
+def implement_trailing_stop_dinamic(df, signal, multiplier_trailing=1.5):
     """
     Simulate a dynamic trailing stop (Chandelier Exit style) for a single trade.
     
