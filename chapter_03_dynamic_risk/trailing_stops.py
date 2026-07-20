@@ -173,7 +173,7 @@ def compare_fixed_vs_trailing(df, num_simulations=100, fixed_stop_pips=20, multi
             'entry_price': entry_price,
             'direction': direction
         }
-        exit_result = implement_trailing_stop_dinamico(df, signal, multiplier_trailing)
+        exit_result = implement_trailing_stop_dinamic(df, signal, multiplier_trailing)
         trailing_results.append(exit_result['pnl_pips'])
         
     # Calculate metrics
