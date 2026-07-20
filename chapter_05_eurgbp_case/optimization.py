@@ -67,16 +67,16 @@ def adjust_for_real_costs(df_results, spread_pips=1.2, slippage_pips=0.5, lot_co
                                     
     df_adjusted['pnl_usd_real'] = df_adjusted['pnl_usd'] - df_adjusted['total_cost_usd']
     
-    pnl_bruto = df_adjusted['pnl_usd'].sum()
+    pnl_gross = df_adjusted['pnl_usd'].sum()
     total_costs = df_adjusted['total_cost_usd'].sum()
     net_pnl = df_adjusted['pnl_usd_real'].sum()
     
     print(f"  💰  REAL COST ANALYSIS")
-    print(f" Gross PnL (Backtest): ${pnl_bruto:,.2f}")
+    print(f" Gross PnL (Backtest): ${pnl_gross:,.2f}")
     print(f" Total Costs (Spread/Comm/Slip): -${total_costs:,.2f}")
     print(f" Net PnL (Reality): ${net_pnl:,.2f}")
-    if pnl_bruto != 0:
-        print(f" Impact on return: -{(total_costs/pnl_bruto)*100:.1f}%\n")
+    if pnl_gross != 0:
+        print(f" Impact on return: -{(total_costs/pnl_gross)*100:.1f}%\n")
     else:
         print(f" Impact on return: N/A\n")
         
